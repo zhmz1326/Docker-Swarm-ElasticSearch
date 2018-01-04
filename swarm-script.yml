@@ -1,0 +1,56 @@
+version: '3.4'
+services:
+  es_master:
+    image: 'docker.elastic.co/elasticsearch/elasticsearch:5.6.0'
+    command: [ elasticsearch, -E, network.host=0.0.0.0, -E, discovery.zen.ping.unicast.hosts=es_master, -E, discovery.zen.minimum_master_nodes=1, -E, node.master=true ]
+    volumes:
+        - /data0/elasticsearch/data:/tmp/elasticsearch/data
+        - /data0/elasticsearch/logs:/tmp/elasticsearch/logs
+    networks:
+        esnet:
+    deploy:
+        replicas: 3
+        endpoint_mode: dnsrr
+        placement:
+            constraints: [node.labels.app_role == elasticsearch]
+
+  nginx:
+    image: 'nginx:1'
+    ports:
+        - '9900:9900'
+    command: |
+        /bin/bash -c "echo '
+        server {
+            listen 9900;
+            add_header X-Frame-Options "SAMEORIGIN";
+            location / {
+                proxy_pass http://es_master:9200;
+                proxy_http_version 1.1;
+                proxy_set_header Connection keep-alive;
+                proxy_set_header Upgrade $$http_upgrade;
+                proxy_set_header Host $$host;
+                proxy_set_header X-Real-IP $$remote_addr;
+                proxy_cache_bypass $$http_upgrade;
+                proxy_connect_timeout 159s;
+                proxy_send_timeout   600;
+                proxy_read_timeout   600;
+                proxy_buffer_size    64k;
+                proxy_buffers     16 32k;
+                proxy_busy_buffers_size 64k;
+                proxy_temp_file_write_size 64k;
+                proxy_pass_header Set-Cookie;
+                proxy_redirect     off;
+                proxy_hide_header  Vary;
+                proxy_ignore_headers Cache-Control Expires;
+            }
+        }' | tee /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"
+    networks:
+        esnet:
+
+networks:
+    esnet:
+        driver: overlay
+        ipam:
+            driver: default
+            config:
+                - subnet: 12.0.0.0/24
